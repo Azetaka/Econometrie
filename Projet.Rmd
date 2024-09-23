@@ -1,0 +1,253 @@
+---
+title: "Projet économétrie"
+author: "Uriel FAGNINOU et Cedric KOFFI"
+date: "2023-11-29"
+output:
+  pdf_document:
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+#importation des libraries nécessaires
+library(openxlsx)
+library(readr)
+library(kableExtra)
+library(stargazer)
+library(sandwich)
+library(lmtest)
+library(ggplot2)
+library(cowplot)
+library(corrplot)
+library(stargazer)
+library(car)
+library(hrbrthemes)
+library(viridis)
+library(dplyr)
+library(olsrr)
+### Working directory
+getwd()
+setwd("/Users/urielfagninou/Documents/RENNES 1/Master 1/Semestre 7/Econométrie et Modélisation écnomique/Projets/KOFFI_FAGNINOU")
+```
+
+**1. Problématique et équation à estimer**
+
+**1.1. Problématique**
+
+Face aux défis croissants liés à la qualité de vie et au bien-être des individus, il devient impératif de comprendre les déterminants du bien-être subjectif sous l'angle de l'économie. Ainsi, la présente étude vise à examiner à l'aide de méthodes économétriques les multiples facteurs susceptibles d'influencer le bien-être subjectif. Telle est la problématique de notre projet où nous nous focalisons sur l'année 2019.
+
+**1.2. Equation du modèle**
+
+Dans le cadre de la construction de notre modèle visant à expliquer les déterminants du bien être subjectif nous avons entrepris une revue approfondie de la littérature scientifique.Parmi les nombreuses théories et modèles disponibles, l'enquête historique sur l'état du bonheur dans le monde menées par le World Happiness Report ont attiré notre attention. En effet, l'enquête propose une approche globale qui établit des liens entre le score du bonheur d'un pays, le PIB par habitant, l'espérance de vie, l'aide sociale. Cette approche vise à décrire dans quelle mesure ces différents facteurs contribuent à l'évaluation du bonheur au sein de chaque pays. Ainsi, l'équation de notre modèle devrait se présenter comme suit:
+
+$$Score=\beta_0+\beta_1(PIB/habitant)+\beta_2(Aide.Sociale)+\beta_3(Espérance.de.vie) + \epsilon $$
+
+**2. Collecte des données**
+
+Pour commencer notre étude, nous avons procédé à la constitution de notre base de données, pour cela nous avons sélectionné trois variables explicatives et une variable à expliquer.Notre échantillon est constitué de données prises en coupes instantanées en 2019 pour 114 états dans le monde. Les données ont été prises sur le site [**https://databank.worldbank.org**](https://databank.worldbank.org){.uri}.
+
+Nous avons combiné cette base avec la liste des pays de l'Afrique pour créer la variable PA (variable indicatrice) qui prend les valeurs :
+
+-   *0 si le pays n'est pas un pays Africain*;
+
+-   *1 si le pays est un pays Africain*
+
+```{r,include=FALSE}
+base <- read.table("base_projet_2019.csv",sep=";",dec=".",header=T, col.names = c(1:9) )
+base <- base[,2:3] 
+colnames(base)<- c("Country","Score") 
+
+healthy <- read.xlsx("Healthy_life_expectancy.xlsx")
+colnames(healthy)<- c("Country","Healthy") 
+test <- merge(base,healthy, by="Country") 
+
+Social <- read.xlsx("Social_support.xlsx")
+colnames(Social) <- c("Country","Social_support")
+
+test <- merge(test, Social, by="Country")
+test$Social_support <- as.numeric(test$Social_support)
+test <- na.omit(test) 
+
+PIB <- read_csv("PIB par habitant.csv")
+PIB <- PIB[c("Country Name","2019")] 
+colnames(PIB)<- c("Country","GDP_per_Capita")
+base_projet <- merge(test, PIB, by="Country")
+base_projet$Healthy <- as.numeric(base_projet$Healthy)
+Africa <- c("Algeria","Angola","Benin","Botswana","Burkina Faso","Burundi","Cabo Verde","Cameroon","Central African Republic","Chad","Comoros","Ivory Coast","Djibouti","Egypt","Equatorial Guinea","Eritrea","Eswatini","Ethiopia","Gabon","Gambia","Ghana","Guinea","Guinea-Bissau","Kenya","Lesotho","Liberia","Libya","Madagascar","Malawi","Mali","Mauritania","Mauritius","Morocco","Mozambique","Namibia","Niger","Nigeria","Rwanda","Sao Tome and Principe","Senegal","Seychelles","Sierra Leone","Somalia","South Africa","South Sudan","Sudan","Tanzania","Togo","Tunisia","Uganda","Zambia","Zimbabwe")
+
+base_projet$PA <- ifelse(base_projet$Country %in% Africa, 1,0)
+```
+
+Nous pouvons lire ci-dessous le descriptif de la base finale que nous allons utiliser pour ce projet.
+
+```{r}
+code=colnames(base_projet)
+def=c("Country names",
+         "Happiness Indicator",
+         "Life expectancy at birth",
+         "Government expenditure on education Percentage of GDP",
+         "GDP per capita constant International dollars 2019",
+         "1 if African country 0 if noto")
+dict <- as.data.frame(matrix(c(code,def),6,2))
+colnames(dict) <- c("Code","Definition")
+
+kable(dict,format="latex", booktabs = T, caption = "Dictionnaire des variables")%>%
+  kable_styling(latex_options = "striped")
+tibble(dict)
+```
+
+**3. Analyse descriptive des variables**
+
+**3.1. Analyse univariée**
+
+Pour en apprendre davantage sur notre variable d'intérêt et nos variables explicatives, nous allons procéder à une analyse statistique desctriptive.
+
+```{r,size=5,fig.height=3,echo=FALSE, fig.height=3,}
+stargazer(base_projet[,2:5], type = "text", title="Statisque Descriptive", digits=2, out="stat_desc.txt")
+#Tableau de statistiques descriptives en fonction des pays l'Afrique 
+tapply(base_projet$Score, base_projet$PA, summary)
+# Boxplot de la variable dependante en fonction de la variable indicatrice 
+ggplot(data=base_projet)+
+  geom_boxplot(aes(x=as.factor(PA),y=Score),fill="skyblue", alpha=.6)+
+  ggtitle("Boxplot of Happiness Score by country group")+
+  xlab("")
+# Identification des individus atypiques 
+sous_groupe_1=base_projet[base_projet$PA==1,]
+individu_1=sous_groupe_1$Country[(which.min(sous_groupe_1$Score))]
+individu_2=sous_groupe_1$Country[(which.max(sous_groupe_1$Score))]
+stargazer(individu_1,individu_2,type = "text",title = "Point atypiques",align=TRUE)
+
+```
+
+L'analyse des statistiques descriptives par pays révèle que les pays non africains affichent un score de bonheur moyen de 6.010, surpassant ainsi celui des pays africains qui est de 4.386. Cette disparité est également corroborée par le boxplot, illustrant une dispersion distincte entre les deux groupes de pays. 
+
+Deux individus atypiques se démarquent au sein du groupe des pays africains, à savoir la République centrafricaine et l'île Maurice. Cette observation peut s'expliquer par le fait que la République centrafricaine présente un score de bonheur légèrement supérieur à la moyenne des pays africains de notre échantillon, avec un PIB par habitant relativement élevé. En revanche, l'île Maurice présente des caractéristiques opposées.
+
+**3.2. Analyse bivariée**
+
+Pour mieux comprendre la relation entre notre variable dépendante et nos variables explicatives, nous recourons à la représentation graphique sous forme de nuage de points. Cela nous permet d'explorer visuellement les liens et les tendances entre ces différentes variables.
+
+```{r echo=FALSE,fig.width=13, fig.height=11}
+Graph_1=ggplot(base_projet, aes(GDP_per_Capita, Score,col=as.factor(PA))) + 
+  geom_point() +
+  labs(x = "GDP", y = "Score") +
+  ggtitle("Graph of GDP per capita and Score")+
+  guides(color = guide_legend(title = "PA"))
+
+Graph_2=ggplot(base_projet, aes(Healthy, Score,col=as.factor(PA))) + 
+  geom_point() +
+  labs(x = "Expectancy", y = "Score") +
+  ggtitle("Graph of Life expectancy at birth and Score") +
+  guides(color = guide_legend(title = "PA"))
+
+Graph_3=ggplot(base_projet, aes(Social_support, Score,col=as.factor(PA))) + 
+  geom_point() +
+  labs(x = "Social aid", y = "Score") +
+  ggtitle("Social aid and Score graph") +
+  guides(color = guide_legend(title = "PA"))
+
+Graph_4=ggplot(base_projet, aes(log(GDP_per_Capita), Score,col=as.factor(PA))) + 
+  geom_point() +
+  labs(x = "log(GDP)", y = "Score") +
+  ggtitle("Graph of log(GDP/Capita) and Score")
+
+plot_grid(Graph_1,Graph_4,Graph_3,Graph_2,nrow=2)
+```
+
+L'examen des quatre graphiques en nuage de points, illustrant la relation entre la variable à expliquer et les variables explicatives, révèle plusieurs observations significatives. Premièrement, il apparaît qu'il n'existe pas de lien linéaire évident entre le score de bonheur et le PIB. Deuxièmement, on observe une forte dispersion du score de bonheur par rapport au niveau d'aide sociale. Enfin, le quatrième graphique indique une relation linéaire entre notre variable dépendante (le score de bonheur) et l'espérance de vie à la naissance. Pour remédier à l'absence de linéarité entre le PIB et le score, nous avons pris le logarithme des deux variables, ce qui a révélé une relation linéaire dans le deuxième graphique. 
+
+Par ailleurs, il est intéressant de noter qu'il n'y a pas de distinction significative dans la dispersion des deux groupes de pays. Les pays non africains persistent en bas des graphiques, tandis que les pays africains restent en haut. Par exemple, au et à mesure que l'espérance de vie à la naissance augmente, le score de bonheur a tendance à augmenter, démontrant une tendance cohérente dans les deux groupes de pays.
+
+**3.2. Analyse de la corrélation**
+
+Afin d'explorer les relations entre deux variables et de faciliter la sélection des variables explicatives lors de l'estimation de notre modèle, nous entreprenons une analyse de la corrélation. Cette approche nous permet d'évaluer la force et la direction de l'association statistique entre les variables, contribuant ainsi à une compréhension approfondie des interdépendances au sein de notre ensemble de données. En utilisant des mesures de corrélation, nous sommes en mesure d'identifier les liens linéaires entre les variables, ce qui guide efficacement le choix des variables à inclure dans le processus d'estimation du modèle statistique.
+
+```{r echo=FALSE}
+Matrice_de_Correlation=cor(base_projet[,2:5])
+stargazer(Matrice_de_Correlation,   title="Matrice de correlation ",align=TRUE, type="text", digits=3)
+corrplot(Matrice_de_Correlation,method = "number",type="upper",
+         number.cex = 0.7,number.digits = 2)
+```
+
+Dans un premier temps, on observe une corrélation positive notable entre notre variable à expliquer (le score de bonheur) et les variables explicatives, à l'exception de la corrélation entre la variable explicative "aide sociale" et la variable de bonheur. Dans un second temps, l'analyse des corrélations entre les variables explicatives révèle une corrélation positive de 0.69 entre la variable PIB et l'espérance de vie à la naissance. La valeur absolue du coefficient de corrélation entre deux variables explicatives n'excède pas 0.8, on peut soupçonner d'une absence de colinéarité entre les variables explicatives.
+
+Nous pouvons renforcer notre analyse en évaluant l'absence de multicolinéarité entre les variables en utilisant la règle de Klein. Si le carré du coefficient de corrélation est supérieur au R^2, on peut soupçonner de la colinéarité.
+
+```{r}
+reg=lm(Score~log(GDP_per_Capita)+Healthy+Social_support+PA,data=base_projet)
+cor(base_projet[,2:5])^2 > summary(reg)$r.squared
+```
+Cette règle met en avant une absence de colinéarité entre les variables.
+
+
+**4.Estimation du modèle**
+
+**4.1. Spécification du modèle**
+
+Pour le choix finale de notre modèle,nous mettrons en route et comparons différents modèles à celui dont nous supposons par hypothèse plus adapté à notre étude dont l'équation est la suivante :
+$$Score=\beta_0+\beta_1*log(PIB/habitant)+ \beta_2*log(PIB/habitant)*PA+\beta_3*(Aide.Sociale)+\beta_4*(Espérance.de.vie) + \beta_5*(PA)+ \epsilon $$
+```{r,echo=FALSE}
+reg1=lm(Score~log(GDP_per_Capita)+log(GDP_per_Capita)*PA +Healthy+Social_support+PA,data=base_projet)
+#modèle niveau / log
+reg2=lm(Score~log(GDP_per_Capita)+log(Healthy)+log(Social_support)+PA,data=base_projet)
+
+#modèle log / log
+reg3=lm( log(Score)~log(GDP_per_Capita)+log(Healthy)+log(Social_support)+PA,data=base_projet)
+
+#visualisation des résultats au sein d'un même tableau
+stargazer(reg1,reg2, reg3,title="Modèles de régression log linéaire",align=TRUE, type="text", digits=3)
+```
+
+Il semble que le premier modèle, présente le R2 ajusté le plus élevé parmi les modèles que nous avons considérés. Un R2 ajusté de 0.771 indiquant que 77,10% de la variabilité du score est expliquée par les variables indépendantes incluses dans le modèle avec effet croisé.Cependant, il est essentiel de réaliser un test de Ramsey afin de vérifier la spécification du modèle.
+
+```{r}
+modele=lm(Score~log(GDP_per_Capita)+log(GDP_per_Capita)*PA+Healthy+Social_support+PA,data=base_projet)
+resettest(modele)
+```
+La p-value du test de Ramsey est inférieure au seuil de 5% alors, le modèle est correctement spécifié. Toutefois, nous procéderons à une évaluation des critères de validité des hypothèses du modèle pour garantir une interprétation robuste des résultats.
+
+
+**4.1. Estimation du modèle**
+
+**4.1.1. Test et validation de la méthode d'estimation**
+  
+**a)Normalité des résidus**
+
+```{r echo=FALSE}
+# analyse graphique
+ols_plot_resid_qq(modele)
+#Vérification via des Tests Statistiques : Test de Shapiro
+shapiro.test(modele$residuals)
+```
+
+Le graphique qqplot des résidus révèle que la grande majorité des observations s'alignent le long de la droite. De plus, la p-value du test de normalité des résidus dépasse le seuil de 5%, ce qui nous conduit à accepter l'hypothèse de normalité des résidus. Par conséquent, on peut affirmer que les résidus suivent approximativement une distribution normale.
+
+
+
+**b)Homoscédasticité des résidus**
+
+```{r echo=FALSE}
+bptest(modele)
+```
+La p-value est supérieure au seuil de 5% alors on accepte l'hypothèse nulle d'homoscédasticité.
+
+
+
+**4.1.2.Interpretation des coefficients, qualité de l’ajustement du modèle et des variables.**
+
+```{r}
+stargazer(modele,type = "text",title = "Modèle d'estimation")
+```
+- **Test de significativité globale du modèle)**
+
+On utilise le test de Fisher : H0 : tous les coefficients sont nuls sauf la constante, c'est à dire $$\beta_1=\beta_2=\beta_3=\beta_4=0$$
+La statistique du test de Fisher Fobs =89.61  et la p-value: < 0.05 (5%) donc on rejette l'hypothèse nulle, il y a au moins un coefficient différent de zéro, le modèle est donc **globalement satisfaisant**.
+
+- **Interpretation des effets et Significativité des coefficients**
+
+Le coefficient 1 affiche une significativité statistique robuste, observée tant au seuil de 5% qu'au seuil de 1%. Cela indique une confiance élevée dans la relation entre l'augmentation du PIB par habitant et l'accroissement du score de bonheur. En d'autres termes, si le PIB par habitant augmente d'un pourcentage, nous observerons une augmentation de 0.0049824 dans le score de bonheur.
+
+Concernant le coefficient 4, il est également significatif au seuil de 5%, soulignant une relation statistiquement importante.Celà indique lorsque l'aide sociale (dépense du Gouvernement dans l'éducation pourcentage du PIB) augmente d'un point de pourcentage du PIB alors le score du bonheur augmentera de 0.1.
+
+Par ailleurs, le coefficient des effets croisés des variables log(GDP_per_Capita) et de la variable PA, sont significatif au seuil de 5%. En effet, pour les pays africains une augmentation du PIB par habitant d'un pourcentage est associée à une augmentation du score de bonheur de 0.001953 ((0.49824-0.30294)/100). En revanche, pour les pays non africains l'augmentation est de 0.0049824 dans le score de bonheur. Cette différence souligne des variations dans la relation entre le PIB par habitant et le bonheur selon la région.
+
